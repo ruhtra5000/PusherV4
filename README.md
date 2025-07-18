@@ -1,5 +1,5 @@
 # PusherV4
-Segundo projeto feito para a disciplina de Inteligência Artificial. O projeto envolve o uso de Algoritmos Genéticos para resolver o problema do Pusher V4 (Gymnasium)
+Segundo projeto feito para a disciplina de Inteligência Artificial. O projeto envolve o uso de Aprendizado por Reforço para resolver o problema do Pusher V4 (Gymnasium).
 
 ## Instalação
 - Ter instalado o [Python 3.10.X](https://www.python.org/downloads/release/python-3100/)
