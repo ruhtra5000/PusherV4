@@ -22,9 +22,9 @@ acaoLimite = 2 #Armazena o limite máximo de cada ação (intervalo [-2, 2])
 estadoAtual = ambiente.reset()[0]  #Retorna o estado atual do ambiente
 
 sigmaRuido = 0.2 #Parâmetro de ruído (desvio padrão da gaussiana)
-decaimentoRuido = 0.992 #Diminui a qtde de ruido (conforme a exploração avança)
+decaimentoRuido = 0.98 #Diminui a qtde de ruido (conforme a exploração avança)
 
-qtdeEpisodios = 10000 
+qtdeEpisodios = 500 
 passosPorEpisodio = 100
 
 # Parâmetros de Treinamento DDPG
@@ -34,7 +34,7 @@ lr_atuador = 1e-4 # Taxa de aprendizado do atuador
 lr_critico = 1e-3 # Taxa de aprendizado do crítico
 batch_size = 256  # Tamanho do lote para amostragem do ReplayBuffer
 delay_treinamento = 1000 # Número de passos antes de começar a treinar (para preencher o buffer)
-atualizacoes_por_passo = 1 # Número de vezes que o agente treina por passo de ambiente
+atualizacoes_por_passo = 3 # Número de vezes que o agente treina por passo de ambiente
 
 # Criação do atuador e crítico
 atuador = Atuador(obsDim, acaoDim, acaoLimite)
@@ -90,7 +90,7 @@ for episodio in range(qtdeEpisodios):
         recompensa_acumulada += recompensa
 
         # Adiciona transição no ReplayBuffer
-        buffer.adicionar(estadoAtual, acaoComRuido, recompensa, novoEstado, finalizado or truncado)
+        buffer.adicionar(estadoAtual, acao_determinista, recompensa, novoEstado, finalizado or truncado)
 
         # Lógica de Treinamento
         if total_passos >= delay_treinamento and len(buffer) >= batch_size:
