@@ -25,7 +25,7 @@ sigmaRuido = 0.2 #Parâmetro de ruído (desvio padrão da gaussiana)
 decaimentoRuido = 0.98 #Diminui a qtde de ruido (conforme a exploração avança)
 
 qtdeEpisodios = 500 
-passosPorEpisodio = 100
+passosPorEpisodio = 70
 
 # Parâmetros de Treinamento DDPG
 gamma = 0.99  # Fator de desconto para recompensas futuras
@@ -56,7 +56,7 @@ otimizador_critico = optim.Adam(critico.parameters(), lr=lr_critico)
 buffer_capacidade = 1_000_000 # Exemplo: 1 milhão de transições
 buffer = ReplayBuffer(buffer_capacidade, obsDim, acaoDim)
 
-total_passos = 0 # Contador para o número total de passos no ambiente
+total_passos = 0
 
 for episodio in range(qtdeEpisodios):
     estadoAtual = ambiente.reset()[0]
@@ -68,52 +68,57 @@ for episodio in range(qtdeEpisodios):
     for i in range(passosPorEpisodio):
         total_passos += 1
 
+        #Normaliza o estado atual com estatísticas do buffer
+        media = buffer.media_estado()
+        desvio = buffer.desvio_estado()
+        estado_normalizado = (estadoAtual - media) / (desvio + 1e-8)
         # Seleção de Ação (Exploração vs. Explotação)
         # O atuador não precisa de torch.no_grad() aqui porque o gradiente é necessário para o treino do atuador
         # Mas para a coleta de dados, a ação em si não é usada para treinar o atuador ainda.
         # No entanto, em DDPG, a ação do atuador é determinística e o ruído é adicionado explicitamente para exploração.
-        estadoTensor = torch.tensor(estadoAtual, dtype=torch.float32).unsqueeze(0)
-        
+        estadoTensor = torch.tensor(estado_normalizado, dtype=torch.float32).unsqueeze(0)
+
         # Gera a ação determinística do atuador
-        with torch.no_grad(): # Não calcular gradientes para a coleta de dados
+        with torch.no_grad():
             acao_determinista = atuador(estadoTensor).squeeze(0).numpy()
 
         # Adiciona ruído gaussiano (que garante a exploração)
-        ruido = np.random.normal(0, sigmaRuido, size=acao_determinista.shape)
-        acaoComRuido = acao_determinista + ruido
-        
         # Garante que a ação esteja dentro dos limites do ambiente
-        acaoComRuido = np.clip(acaoComRuido, -acaoLimite, acaoLimite)
+        ruido = np.random.normal(0, sigmaRuido, size=acao_determinista.shape)
+        acaoComRuido = np.clip(acao_determinista + ruido, -acaoLimite, acaoLimite)
 
         # Executa a ação no ambiente
         novoEstado, recompensa, finalizado, truncado, info = ambiente.step(acaoComRuido)
         recompensa_acumulada += recompensa
 
         # Adiciona transição no ReplayBuffer
-        buffer.adicionar(estadoAtual, acao_determinista, recompensa, novoEstado, finalizado or truncado)
+        buffer.adicionar(estadoAtual, acaoComRuido, recompensa, novoEstado, finalizado or truncado)
 
-        # Lógica de Treinamento
+        # Treinamento
         if total_passos >= delay_treinamento and len(buffer) >= batch_size:
             for _ in range(atualizacoes_por_passo):
                 # 1. Amostrar um lote do buffer
                 batch_estados_np, batch_acoes_np, batch_recompensas_np, \
                 batch_proximos_estados_np, batch_finalizados_np = buffer.amostrar(batch_size)
 
-                # 2. Converter arrays NumPy para tensores PyTorch
-                batch_estados = torch.tensor(batch_estados_np, dtype=torch.float32)
-                batch_acoes = torch.tensor(batch_acoes_np, dtype=torch.float32)
-                batch_recompensas = torch.tensor(batch_recompensas_np, dtype=torch.float32).unsqueeze(1) # [batch_size, 1]
-                batch_proximos_estados = torch.tensor(batch_proximos_estados_np, dtype=torch.float32)
-                batch_finalizados = torch.tensor(batch_finalizados_np, dtype=torch.float32).unsqueeze(1) # [batch_size, 1]
+                # Normaliza os estados e próximos estados
+                media = buffer.media_estado()
+                desvio = buffer.desvio_estado()
 
-                # 3. Treinar o Crítico
-                otimizador_critico.zero_grad() # Zera os gradientes
-                
+                # 2. Converter arrays NumPy para tensores PyTorch
+                batch_estados = torch.tensor((batch_estados_np - media) / (desvio + 1e-8), dtype=torch.float32)
+                batch_proximos_estados = torch.tensor((batch_proximos_estados_np - media) / (desvio + 1e-8), dtype=torch.float32)
+                batch_acoes = torch.tensor(batch_acoes_np, dtype=torch.float32)
+                batch_recompensas = torch.tensor(batch_recompensas_np, dtype=torch.float32).unsqueeze(1)  # [batch_size, 1]
+                batch_finalizados = torch.tensor(batch_finalizados_np, dtype=torch.float32).unsqueeze(1)  # [batch_size, 1]
+
+                # 3. Treinar o crítico
+                otimizador_critico.zero_grad()  # Zera os gradientes
                 # Calcular o alvo Q (Y_t) usando as redes alvo para estabilidade
                 with torch.no_grad(): # Não calcular gradientes para o alvo Q
                     proximas_acoes = atuador_alvo(batch_proximos_estados)
                     proximos_q_valores = critico_alvo(batch_proximos_estados, proximas_acoes)
-                    
+
                     # Se o episódio terminou, o Q do próximo estado é 0
                     alvo_q = batch_recompensas + gamma * (1 - batch_finalizados) * proximos_q_valores
 
@@ -141,16 +146,33 @@ for episodio in range(qtdeEpisodios):
                     for param, target_param in zip(atuador.parameters(), atuador_alvo.parameters()):
                         target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
-
         if finalizado or truncado:
             break
 
-        estadoAtual = novoEstado
-        time.sleep(0.01) # Pequeno atraso para visualização
+        estadoAtual = novoEstado # Pequeno atraso para visualização
+        time.sleep(0.01)
     
     # Aplica o decaimento no ruído
-    sigmaRuido *= decaimentoRuido 
-    
+    sigmaRuido *= decaimentoRuido
     print(f"  Recompensa Acumulada no Episódio: {recompensa_acumulada:.2f}")
+
+    #Avaliação sem ruído a cada 50 episódios
+    if (episodio + 1) % 50 == 0:
+        estado_teste = ambiente.reset()[0]
+        recompensa_teste = 0
+        for _ in range(passosPorEpisodio):
+            with torch.no_grad():
+                acao = atuador(torch.tensor(estado_teste, dtype=torch.float32).unsqueeze(0)).squeeze(0).numpy()
+            acao = np.clip(acao, -acaoLimite, acaoLimite)
+            estado_teste, r, done, truncated, _ = ambiente.step(acao)
+            recompensa_teste += r
+            if done or truncated:
+                break
+        print(f"Avaliação sem ruído | Episódio {episodio + 1}: Recompensa = {recompensa_teste:.2f}")
+
+    #Salvar buffer a cada 100 episódios
+    if (episodio + 1) % 100 == 0:
+        buffer.salvar(f"buffer_ep{episodio+1}.npz")
+        print("Buffers salvos.")
 
 ambiente.close()
