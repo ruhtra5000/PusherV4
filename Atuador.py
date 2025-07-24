@@ -1,6 +1,6 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+import torch # type: ignore
+import torch.nn as nn # type: ignore
+import torch.nn.functional as F # type: ignore
 
 #Classe responsável por criar novas ações (7-upla)
 
@@ -24,6 +24,6 @@ class Atuador (nn.Module):
         self.acao_limite = acao_limite
 
     def forward(self, obs):
-        # obs: tensor de shape [batch_size, obs_dim]
-        # saída: ação contínua entre [-acao_limite, acao_limite]
+        #obs: tensor de shape [batch_size, obs_dim]
+        #saída: ação contínua entre [-acao_limite, acao_limite]
         return self.net(obs) * self.acao_limite
